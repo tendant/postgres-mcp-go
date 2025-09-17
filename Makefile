@@ -1,0 +1,41 @@
+SHELL := /bin/bash
+GO ?= go
+GOTOOLCHAIN ?= local
+GOMODCACHE ?= $(CURDIR)/.cache/gomod
+GOCACHE ?= $(CURDIR)/.cache/gocache
+CMD := ./cmd/postgres-mcp
+LISTEN ?= :8080
+
+CACHE_ENV := GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) GOTOOLCHAIN=$(GOTOOLCHAIN)
+CACHE_DIRS := $(GOCACHE) $(GOMODCACHE)
+
+.PHONY: build test run-stdio run-http fmt tidy cache-dirs
+
+cache-dirs:
+	@mkdir -p $(CACHE_DIRS)
+
+build: cache-dirs
+	$(CACHE_ENV) $(GO) build ./...
+
+test: cache-dirs
+	$(CACHE_ENV) $(GO) test ./...
+
+run-stdio: cache-dirs
+	@if [ -z "$(DATABASE_URL)" ]; then \
+		echo "DATABASE_URL must be set" >&2; \
+		exit 1; \
+	fi
+	$(CACHE_ENV) $(GO) run $(CMD) --mode=stdio --database-url "$(DATABASE_URL)" $(EXTRA_FLAGS)
+
+run-http: cache-dirs
+	@if [ -z "$(DATABASE_URL)" ]; then \
+		echo "DATABASE_URL must be set" >&2; \
+		exit 1; \
+	fi
+	$(CACHE_ENV) $(GO) run $(CMD) --mode=http --listen "$(LISTEN)" --database-url "$(DATABASE_URL)" $(EXTRA_FLAGS)
+
+fmt:
+	$(GO) fmt ./...
+
+tidy: cache-dirs
+	$(CACHE_ENV) $(GO) mod tidy

@@ -23,20 +23,20 @@ type queryHandler struct {
 }
 
 type queryInput struct {
-	SQL     string        `json:"sql" jsonschema:"title=SQL statement,description=Statement to execute against PostgreSQL"`
-	Args    []any         `json:"args,omitempty" jsonschema:"title=Parameters,description=Positional parameters that map to $1, $2, ..."`
-	MaxRows int           `json:"maxRows,omitempty" jsonschema:"title=Row limit,description=Override the default row limit for this call,minimum=1"`
-	Meta    mcp.Meta      `json:"_meta,omitempty"`
+	SQL     string   `json:"sql" jsonschema:"title=SQL statement,description=Statement to execute against PostgreSQL"`
+	Args    []any    `json:"args,omitempty" jsonschema:"title=Parameters,description=Positional parameters that map to $1, $2, ..."`
+	MaxRows int      `json:"maxRows,omitempty" jsonschema:"title=Row limit,description=Override the default row limit for this call,minimum=1"`
+	Meta    mcp.Meta `json:"_meta,omitempty"`
 }
 
 type queryOutput struct {
-	Command   string              `json:"command"`
-	RowCount  int64               `json:"rowCount"`
-	Columns   []string            `json:"columns,omitempty"`
-	Rows      []map[string]any    `json:"rows,omitempty"`
-	Truncated bool                `json:"truncated,omitempty"`
-	Elapsed   string              `json:"elapsed"`
-	Meta      mcp.Meta            `json:"_meta,omitempty"`
+	Command   string           `json:"command"`
+	RowCount  int64            `json:"rowCount"`
+	Columns   []string         `json:"columns,omitempty"`
+	Rows      []map[string]any `json:"rows,omitempty"`
+	Truncated bool             `json:"truncated,omitempty"`
+	Elapsed   string           `json:"elapsed"`
+	Meta      mcp.Meta         `json:"_meta,omitempty"`
 }
 
 func registerQueryTool(server *mcp.Server, handler *queryHandler) {
@@ -145,10 +145,7 @@ func applyTimeout(ctx context.Context, d time.Duration) (context.Context, contex
 }
 
 func commandString(tag pgconn.CommandTag) string {
-	if tag == nil {
-		return ""
-	}
-	return string(tag)
+	return tag.String()
 }
 
 func normalizeArgument(arg any) any {
@@ -182,15 +179,9 @@ func normalizeValue(v any) any {
 	case time.Time:
 		return val.UTC().Format(time.RFC3339Nano)
 	case pgtype.Numeric:
-		if !val.Valid {
-			return nil
-		}
-		return val.String()
+		return formatNumeric(&val)
 	case *pgtype.Numeric:
-		if val == nil || !val.Valid {
-			return nil
-		}
-		return val.String()
+		return formatNumeric(val)
 	case fmt.Stringer:
 		return val.String()
 	default:
@@ -198,10 +189,61 @@ func normalizeValue(v any) any {
 	}
 }
 
+func formatNumeric(num *pgtype.Numeric) any {
+	if num == nil || !num.Valid {
+		return nil
+	}
+	switch num.InfinityModifier {
+	case pgtype.Infinity:
+		return "Infinity"
+	case pgtype.NegativeInfinity:
+		return "-Infinity"
+	}
+	if num.NaN {
+		return "NaN"
+	}
+	if num.Int == nil {
+		return "0"
+	}
+	s := num.Int.String()
+	if num.Exp == 0 {
+		return s
+	}
+	neg := strings.HasPrefix(s, "-")
+	if neg {
+		s = s[1:]
+	}
+	if num.Exp > 0 {
+		formatted := s + strings.Repeat("0", int(num.Exp))
+		if neg {
+			return "-" + formatted
+		}
+		return formatted
+	}
+	places := int(-num.Exp)
+	if places >= len(s) {
+		formatted := "0." + strings.Repeat("0", places-len(s)) + s
+		if neg {
+			formatted = "-" + formatted
+		}
+		return strings.TrimSuffix(strings.TrimRight(formatted, "0"), ".")
+	}
+	idx := len(s) - places
+	formatted := s[:idx] + "." + s[idx:]
+	formatted = strings.TrimSuffix(strings.TrimRight(formatted, "0"), ".")
+	if formatted == "" {
+		formatted = "0"
+	}
+	if neg {
+		formatted = "-" + formatted
+	}
+	return formatted
+}
+
 var allowedReadOnly = map[string]struct{}{
-	"SELECT": {},
-	"WITH":   {},
-	"SHOW":   {},
+	"SELECT":  {},
+	"WITH":    {},
+	"SHOW":    {},
 	"EXPLAIN": {},
 	"VALUES":  {},
 	"TABLE":   {},

@@ -23,9 +23,9 @@ type queryHandler struct {
 }
 
 type queryInput struct {
-	SQL     string   `json:"sql" jsonschema:"title=SQL statement,description=Statement to execute against PostgreSQL"`
-	Args    []any    `json:"args,omitempty" jsonschema:"title=Parameters,description=Positional parameters that map to $1, $2, ..."`
-	MaxRows int      `json:"maxRows,omitempty" jsonschema:"title=Row limit,description=Override the default row limit for this call,minimum=1"`
+	SQL     string   `json:"sql" jsonschema:"SQL statement to execute against PostgreSQL"`
+	Args    []any    `json:"args,omitempty" jsonschema:"Positional parameters that map to $1, $2, ..."`
+	MaxRows int      `json:"maxRows,omitempty" jsonschema:"Override the default row limit for this call; must be >= 1"`
 	Meta    mcp.Meta `json:"_meta,omitempty"`
 }
 

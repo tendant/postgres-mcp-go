@@ -41,10 +41,11 @@ func main() {
 		log.Fatalf("configuration error: %v", err)
 	}
 
+	logger := log.New(os.Stdout, "postgres-mcp ", log.LstdFlags|log.Lmicroseconds)
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	pool, err := configurePool(ctx, cfg.DatabaseURL)
+	pool, err := configurePool(ctx, cfg.DatabaseURL, logger)
 	if err != nil {
 		log.Fatalf("database error: %v", err)
 	}
@@ -55,6 +56,7 @@ func main() {
 		ReadOnly:       cfg.ReadOnly,
 		MaxRows:        cfg.MaxRows,
 		RequestTimeout: cfg.RequestTimeout,
+		Logger:         logger,
 	}
 
 	switch cfg.Mode {
@@ -63,11 +65,12 @@ func main() {
 		if err != nil {
 			log.Fatalf("server setup failed: %v", err)
 		}
+		logger.Printf("starting stdio server readOnly=%t", cfg.ReadOnly)
 		if err := srv.Run(ctx, &mcp.StdioTransport{}); err != nil && !errors.Is(err, context.Canceled) {
 			log.Fatalf("stdio session ended with error: %v", err)
 		}
 	case modeHTTP:
-		if err := runHTTP(ctx, cfg, serverOpts); err != nil {
+		if err := runHTTP(ctx, cfg, serverOpts, logger); err != nil {
 			log.Fatalf("http server error: %v", err)
 		}
 	default:
@@ -118,7 +121,7 @@ func defaultDatabaseURL() string {
 	return ""
 }
 
-func configurePool(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
+func configurePool(ctx context.Context, dsn string, logger *log.Logger) (*pgxpool.Pool, error) {
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
@@ -142,33 +145,39 @@ func configurePool(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
 		return nil, fmt.Errorf("connectivity check failed: %w", err)
 	}
 
+	if logger != nil {
+		logger.Printf("connected to postgres host=%s database=%s", cfg.ConnConfig.Host, cfg.ConnConfig.Database)
+	}
+
 	return pool, nil
 }
 
-func runHTTP(ctx context.Context, cfg config, serverOpts postgresmcp.ServerOptions) error {
+func runHTTP(ctx context.Context, cfg config, serverOpts postgresmcp.ServerOptions, logger *log.Logger) error {
 	getServer := func(*http.Request) *mcp.Server {
 		srv, err := postgresmcp.NewServer(serverOpts)
 		if err != nil {
-			log.Printf("failed to prepare session: %v", err)
+			if logger != nil {
+				logger.Printf("failed to prepare session: %v", err)
+			}
 			return nil
 		}
 		return srv
 	}
 
-	handler := mcp.NewStreamableHTTPHandler(getServer, &mcp.StreamableHTTPOptions{
+	streamableHandler := mcp.NewStreamableHTTPHandler(getServer, &mcp.StreamableHTTPOptions{
 		Stateless:    cfg.HTTPStateless,
 		JSONResponse: cfg.HTTPJSON,
 	})
 
 	srv := &http.Server{
 		Addr:              cfg.ListenAddr,
-		Handler:           handler,
+		Handler:           httpLoggingMiddleware(streamableHandler, logger),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
 	errCh := make(chan error, 1)
 	go func() {
-		log.Printf("streamable HTTP listening on %s", cfg.ListenAddr)
+		logger.Printf("streamable HTTP listening on %s stateless=%t jsonResponse=%t", cfg.ListenAddr, cfg.HTTPStateless, cfg.HTTPJSON)
 		errCh <- srv.ListenAndServe()
 	}()
 
@@ -189,4 +198,34 @@ func runHTTP(ctx context.Context, cfg config, serverOpts postgresmcp.ServerOptio
 		}
 		return err
 	}
+}
+
+func httpLoggingMiddleware(next http.Handler, logger *log.Logger) http.Handler {
+	if logger == nil {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(sw, r)
+		dur := time.Since(start)
+		logger.Printf("http request remote=%s method=%s path=%s status=%d bytes=%d duration=%s", r.RemoteAddr, r.Method, r.URL.Path, sw.status, sw.bytes, dur)
+	})
+}
+
+type statusWriter struct {
+	http.ResponseWriter
+	status int
+	bytes  int64
+}
+
+func (w *statusWriter) WriteHeader(status int) {
+	w.status = status
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *statusWriter) Write(p []byte) (int, error) {
+	n, err := w.ResponseWriter.Write(p)
+	w.bytes += int64(n)
+	return n, err
 }

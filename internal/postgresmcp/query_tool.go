@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"math"
 	"strings"
 	"time"
@@ -20,6 +21,7 @@ type queryHandler struct {
 	readOnly       bool
 	maxRows        int
 	requestTimeout time.Duration
+	logger         *log.Logger
 }
 
 type queryInput struct {
@@ -55,6 +57,7 @@ func (h *queryHandler) call(ctx context.Context, _ *mcp.CallToolRequest, input q
 		return nil, queryOutput{}, errors.New("only a single SQL statement is supported per call")
 	}
 	if h.readOnly && !isReadOnlyStatement(sqlText) {
+		logf(h.logger, "rejecting mutating statement in read-only mode sql=%q", shorten(sqlText))
 		return nil, queryOutput{}, errors.New("mutating statements are disabled in read-only mode")
 	}
 
@@ -76,9 +79,12 @@ func (h *queryHandler) call(ctx context.Context, _ *mcp.CallToolRequest, input q
 		defer cancel()
 	}
 
+	logf(h.logger, "query begin sql=%q args=%s limit=%d", shorten(sqlText), formatArgs(params), limit)
+
 	start := time.Now()
 	rows, err := h.pool.Query(ctx, sqlText, params...)
 	if err != nil {
+		logf(h.logger, "query error sql=%q err=%v", shorten(sqlText), err)
 		return nil, queryOutput{}, err
 	}
 	defer rows.Close()
@@ -116,6 +122,7 @@ func (h *queryHandler) call(ctx context.Context, _ *mcp.CallToolRequest, input q
 		count++
 	}
 	if err := rows.Err(); err != nil {
+		logf(h.logger, "query cursor error sql=%q err=%v", shorten(sqlText), err)
 		return nil, queryOutput{}, err
 	}
 
@@ -133,6 +140,8 @@ func (h *queryHandler) call(ctx context.Context, _ *mcp.CallToolRequest, input q
 		Truncated: trunc,
 		Elapsed:   time.Since(start).Round(time.Millisecond).String(),
 	}
+
+	logf(h.logger, "query success sql=%q command=%s rows=%d truncated=%t elapsed=%s", shorten(sqlText), out.Command, out.RowCount, out.Truncated, out.Elapsed)
 
 	return nil, out, nil
 }
@@ -238,6 +247,34 @@ func formatNumeric(num *pgtype.Numeric) any {
 		formatted = "-" + formatted
 	}
 	return formatted
+}
+
+func logf(logger *log.Logger, format string, args ...any) {
+	if logger == nil {
+		return
+	}
+	logger.Printf(format, args...)
+}
+
+func formatArgs(args []any) string {
+	if len(args) == 0 {
+		return "[]"
+	}
+	parts := make([]string, len(args))
+	for i, v := range args {
+		parts[i] = fmt.Sprintf("%v", v)
+	}
+	if len(parts) > 8 {
+		parts = append(parts[:8], "...")
+	}
+	return "[" + strings.Join(parts, ", ") + "]"
+}
+
+func shorten(sql string) string {
+	if len(sql) <= 120 {
+		return sql
+	}
+	return sql[:117] + "..."
 }
 
 var allowedReadOnly = map[string]struct{}{

@@ -2,6 +2,8 @@ package postgresmcp
 
 import (
 	"fmt"
+	"log"
+	"os"
 	"strings"
 	"time"
 
@@ -28,6 +30,10 @@ type ServerOptions struct {
 	// RequestTimeout defines the maximum duration allowed for handling a single
 	// tool invocation. Zero disables the additional timeout.
 	RequestTimeout time.Duration
+
+	// Logger is used to emit diagnostic information. When nil, a default logger
+	// writing to stdout is used.
+	Logger *log.Logger
 }
 
 // NewServer wires up an MCP server that exposes PostgreSQL via the go-sdk.
@@ -39,6 +45,11 @@ func NewServer(opts ServerOptions) (*mcp.Server, error) {
 	maxRows := opts.MaxRows
 	if maxRows <= 0 {
 		maxRows = defaultMaxRows
+	}
+
+	logger := opts.Logger
+	if logger == nil {
+		logger = log.New(os.Stdout, "postgres-mcp ", log.LstdFlags|log.Lmicroseconds)
 	}
 
 	instructions := []string{
@@ -65,9 +76,12 @@ func NewServer(opts ServerOptions) (*mcp.Server, error) {
 		readOnly:       opts.ReadOnly,
 		maxRows:        maxRows,
 		requestTimeout: opts.RequestTimeout,
+		logger:         logger,
 	}
 
 	registerQueryTool(server, &h)
+
+	logger.Printf("server initialized readOnly=%t maxRows=%d timeout=%s", opts.ReadOnly, maxRows, opts.RequestTimeout)
 
 	return server, nil
 }

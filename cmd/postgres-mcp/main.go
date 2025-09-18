@@ -209,7 +209,12 @@ func httpLoggingMiddleware(next http.Handler, logger *log.Logger) http.Handler {
 		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(sw, r)
 		dur := time.Since(start)
-		logger.Printf("http request remote=%s method=%s path=%s status=%d bytes=%d duration=%s", r.RemoteAddr, r.Method, r.URL.Path, sw.status, sw.bytes, dur)
+		sessionID := r.Header.Get("Mcp-Session-Id")
+		if sw.status >= http.StatusBadRequest && sw.errMsg != "" {
+			logger.Printf("http request remote=%s method=%s path=%s status=%d bytes=%d duration=%s session=%s error=%q", r.RemoteAddr, r.Method, r.URL.Path, sw.status, sw.bytes, dur, sessionID, sw.errMsg)
+		} else {
+			logger.Printf("http request remote=%s method=%s path=%s status=%d bytes=%d duration=%s session=%s", r.RemoteAddr, r.Method, r.URL.Path, sw.status, sw.bytes, dur, sessionID)
+		}
 	})
 }
 
@@ -217,6 +222,7 @@ type statusWriter struct {
 	http.ResponseWriter
 	status int
 	bytes  int64
+	errMsg string
 }
 
 func (w *statusWriter) WriteHeader(status int) {
@@ -227,5 +233,12 @@ func (w *statusWriter) WriteHeader(status int) {
 func (w *statusWriter) Write(p []byte) (int, error) {
 	n, err := w.ResponseWriter.Write(p)
 	w.bytes += int64(n)
+	if w.status >= http.StatusBadRequest && w.errMsg == "" {
+		max := 256
+		if n < max {
+			max = n
+		}
+		w.errMsg = string(p[:max])
+	}
 	return n, err
 }

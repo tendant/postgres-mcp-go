@@ -210,6 +210,9 @@ func httpLoggingMiddleware(next http.Handler, logger *log.Logger) http.Handler {
 		next.ServeHTTP(sw, r)
 		dur := time.Since(start)
 		sessionID := r.Header.Get("Mcp-Session-Id")
+		if sessionID == "" {
+			sessionID = r.URL.Query().Get("sessionid")
+		}
 		if sw.status >= http.StatusBadRequest && sw.errMsg != "" {
 			logger.Printf("http request remote=%s method=%s path=%s status=%d bytes=%d duration=%s session=%s error=%q", r.RemoteAddr, r.Method, r.URL.Path, sw.status, sw.bytes, dur, sessionID, sw.errMsg)
 		} else {

@@ -8,11 +8,12 @@
 - Keep generated binaries, coverage files, and local `.env` secrets out of version control (already covered in `.gitignore`).
 
 ## Build, Test, and Development Commands
-- `go mod tidy` — synchronize `go.mod` after adding or removing imports.
-- `go fmt ./...` — apply canonical Go formatting before every commit.
-- `go build ./...` — verify all packages compile with the current toolchain.
-- `go test ./...` — run the full unit test suite; add `-race` when touching concurrency.
-- `go run ./cmd/agent` — execute the default agent entry point once it exists.
+- `make build` — compiles and drops `bin/postgres-mcp` with sandboxed Go caches.
+- `make test` — runs `go test ./...` with the same cached toolchain setup.
+- `make run-stdio` — launches the MCP server over stdio (requires `DATABASE_URL`).
+- `make run-http` — launches the HTTP server; add flags via `EXTRA_FLAGS` (e.g., `--http-json`).
+- `go mod tidy` — normalize module manifests after dependency changes.
+- `go fmt ./...` — format code using Go defaults.
 
 ## Coding Style & Naming Conventions
 - Follow Go 1.24 defaults: tabs for indentation, one statement per line, no unnecessary semicolons.
